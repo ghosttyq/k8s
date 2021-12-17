@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nfs-client-db
+  name: nfs-client-db
+  namespace: mysql
+spec:
+  selector:
+    matchLabels:
+      app: nfs-client-db
+  #strategy:
+  #  type: Recreate
+  template:
+    metadata:
+      labels:
+        app: nfs-client-db
+    spec:
+      containers:
+      - env:
+        - name: PROVISIONER_NAME
+          value: nfs-mysql-store
+        - name: NFS_SERVER
+          value: 192.168.0.78
+        - name: NFS_PATH
+          value: /mnt/data
+        image: quay.io/external_storage/nfs-client-provisioner:latest
+        imagePullPolicy: IfNotPresent
+        name: nfs-client-db
+        volumeMounts:
+        - mountPath: /persistentvolumes
+          name: nfs-client-root
+      serviceAccountName: nfs-client-provisioner-db
+      nodeName: k8smaster1
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+      volumes:
+      - name: nfs-client-root
+        nfs:
+          path: /mnt/data
+          server: 192.168.0.78
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-mysql
+  namespace: mysql
+parameters:
+  archiveOnDelete: "false"
+provisioner: nfs-mysql-store

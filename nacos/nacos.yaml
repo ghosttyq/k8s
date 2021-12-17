@@ -1,0 +1,251 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nacos-cm
+  namespace: jumper  #命名空间
+data:
+  mysql.master.host: "mysql-master.mysql"
+  mysql.master.db.name: "nacos_config"
+  mysql.master.port: "3306"
+  mysql.master.user: "root"
+---
+apiVersion: v1
+data:
+  mysql.master.password: dHlxODQxMjE3IUAj #tyq841217!@#
+kind: Secret
+metadata:
+  name: nacos-secret
+  namespace: jumper
+type: Opaque
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nacos
+  namespace: jumper  #命名空间
+spec:
+  serviceName: nacos-headless
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: nacos
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: "app"
+                    operator: In
+                    values:
+                      - nacos
+              topologyKey: "kubernetes.io/hostname"
+      #serviceAccountName: nfs-client-provisioner
+      imagePullSecrets:
+      - name: hwhubsecret
+      initContainers:
+        - name: peer-finder-plugin-install
+          #image: nacos/nacos-peer-finder-plugin:1.1
+          image: swr.cn-south-1.myhuaweicloud.com/ghosttyq/nacos-peer-finder-plugin:1.1
+          imagePullPolicy: Always
+          volumeMounts:
+            - mountPath: /home/nacos/plugins/peer-finder
+              name: nacos-data
+              subPath: peer-finder
+      containers:
+        - name: nacos
+          imagePullPolicy: Always
+          #image: nacos/nacos-server:2.0.2
+          image: swr.cn-south-1.myhuaweicloud.com/ghosttyq/nacos-server:2.0.2
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+          ports:
+            - containerPort: 8848
+              name: client-port
+            - containerPort: 9848
+              name: client-rpc
+            - containerPort: 9849
+              name: raft-rpc
+            - containerPort: 7848
+              name: old-raft-rpc
+          env:
+            - name: NACOS_REPLICAS   #副本数量1
+              value: "1"
+            - name: SERVICE_NAME
+              value: "nacos-headless"
+            - name: DOMAIN_NAME
+              value: "cluster.local"          
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:   #  容器内获取Pod信息
+                  apiVersion: v1
+                  fieldPath: metadata.namespace   #  pod 所在的namespace
+            - name: MYSQL_SERVICE_DB_NAME   #数据库名称
+              valueFrom:
+                configMapKeyRef:   #  ConfigMap获取信息
+                  name: nacos-cm
+                  key: mysql.master.db.name
+            - name: MYSQL_SERVICE_PORT    #数据库端口号
+              valueFrom:
+                configMapKeyRef:
+                  name: nacos-cm
+                  key: mysql.master.port
+            - name: MYSQL_SERVICE_USER   #数据库用户名
+              valueFrom:
+                configMapKeyRef:
+                  name: nacos-cm
+                  key: mysql.master.user
+            - name: MYSQL_SERVICE_PASSWORD    #数据库密码
+              valueFrom:
+                secretKeyRef:
+                  name: nacos-secret
+                  key: mysql.master.password
+            - name: MYSQL_SERVICE_HOST   #数据库域名
+              valueFrom:
+                configMapKeyRef:
+                  name: nacos-cm
+                  key: mysql.master.host                  
+            - name: NACOS_SERVER_PORT     #nacos服务端口
+              value: "8848"
+            - name: NACOS_APPLICATION_PORT   #nacos应用端口
+              value: "8848"
+            - name: PREFER_HOST_MODE   #域名模式用hostname
+              value: "hostname"
+            - name: nacos.naming.data.warmup   #单机模式
+              value: "false"
+            - name: JVM_XMS
+              value: "512m"
+            - name: JVM_XMX
+              value: "1024m"   
+            - name: JVM_XMN
+              value: "256m"           
+          volumeMounts:
+            - name: nacos-data
+              mountPath: /home/nacos/plugins/peer-finder
+              subPath: peer-finder
+            - name: nacos-data
+              mountPath: /home/nacos/data
+              subPath: nacos-data
+            - name: nacos-data
+              mountPath: /home/nacos/logs
+              subPath: logs
+              
+      # 容污 允许部署到master节点
+      tolerations:
+        - key: "node-role.kubernetes.io/master"
+          operator: "Equal"
+          value: ""
+          effect: "NoSchedule"
+      # 亲和度 设置必须部署到master  
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: "kubernetes.io/hostname"   # 键名，Node 节点的标签
+                    operator: In         # 匹配条件
+                    values: ["k8smaster1"]
+  volumeClaimTemplates:
+    - metadata:
+        name: nacos-data
+        annotations:
+          volume.beta.kubernetes.io/storage-class: "managed-nfs-storage1"
+      spec:
+        accessModes: [ "ReadWriteMany" ]
+        storageClassName: managed-nfs-storage1   #存储类名，使用集群中已存在的
+        resources:
+          requests:
+            storage: 5Gi
+  selector:
+    matchLabels:
+      app: nacos
+   
+   
+---
+# 内部访问的Headless Service无头服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: nacos-headless
+  namespace: jumper  #命名空间
+  labels:
+    app: nacos
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  selector:
+    app: nacos
+  ports:
+    - port: 8848
+      name: nacos-port
+      targetPort: 8848
+    - port: 9848
+      name: client-rpc
+      targetPort: 9848
+    - port: 9849
+      name: raft-rpc
+      targetPort: 9849
+    ## 兼容1.4.x版本的选举端口
+    - port: 7848
+      name: old-raft-rpc
+      targetPort: 7848
+  clusterIP: None
+
+          
+---
+# 外部访问的服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: nacos-external-service
+  namespace: jumper  #命名空间
+spec:
+  selector:
+    app: nacos
+  ports:
+  - name: external-port1
+    protocol: TCP
+    port: 8848   # kubernetes中的服务之间访问的端口
+    targetPort: 8848  #  容器的端口（最根本的端口入口），与制作容器时暴露的端口一致（DockerFile中EXPOSE）
+    nodePort: 30041   #  外部机器可访问的端口
+  - name: external-port2
+    protocol: TCP
+    port: 9848   # kubernetes中的服务之间访问的端口
+    targetPort: 9848  #  容器的端口（最根本的端口入口），与制作容器时暴露的端口一致（DockerFile中EXPOSE）
+    #  nodePort: 11848   #  外部机器可访问的端口    
+  type: NodePort  
+
+ 
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "True"
+  name: nacos-ingress
+  namespace: jumper  #命名空间
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - mini-nacos.ghosttyq.site
+    secretName: mini-nacos.ghosttyq.site
+  rules:  # 用于定义当前Ingress资源的转发规则列表；由rules定义规则，或没有匹配到规则时，所有的流量会转发到由backend定义的默认后端
+  - host: mini-nacos.ghosttyq.site
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:  #  默认的后端用于服务那些没有匹配到任何规则的请求；定义Ingress资源时，必须要定义backend或rules两者之一，该字段用于让负载均衡器指定一个全局默认的后端
+          service:
+            name: nacos-headless    # Service资源名称
+            port:
+              number: 8848   #Service端口（可以取ports里面的name，也可以取数字端口）  
+
+

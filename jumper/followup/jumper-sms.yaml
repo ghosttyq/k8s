@@ -1,0 +1,71 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: jumper-sms
+  namespace: jumper  #命名空间
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "managed-nfs-storage1"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+# jumper-sms 容器
+apiVersion: apps/v1  #版本号
+kind: Deployment   #创建的资源类型
+metadata:   #该资源的元数据，name必选项
+  name: jumper-sms   #name描述
+  namespace: jumper  #命名空间
+spec:    #规格说明
+  replicas: 1    #副本数量
+  selector:
+    matchLabels:
+      app: jumper-sms
+  template:      #定义pod的模板，配置文件的重要部分
+    metadata:     #定义pod的元数据，至少定义一个label
+      labels:
+        app: jumper-sms   #该pod拥有的标签，对应上面的spec.selector.matchLabels.app，否则匹配不上
+    spec:        #描述pod的规格，定义pod中每个容器的属性，name和image必须
+      imagePullSecrets:
+      - name: hwhubsecret
+      containers:    #容器描述
+      - name: jumper-sms
+        image: swr.cn-south-1.myhuaweicloud.com/jumper/jumper-sms-uat:latest       #镜像来源名字
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"      
+        imagePullPolicy: Always     #拉取策略
+        ports:   # 容器公开的端口列表。在这里公开端口可以为系统提供关于容器使用的网络连接的额外信息，但主要是提供描述信息
+        - name: jumper-sms
+          containerPort: 6002
+        env:
+        - name: NACOS_ADDRESS  
+          value: "nacos-headless.jumper:8848"            
+        - name: SENTINEL_ADDRESS  
+          value: "sentinel-service.jumper:8858"           
+        - name: TZ  
+          value: "Asia/Shanghai"            
+        volumeMounts:
+        - name: jumper-sms-data   # volumeClaimTemplates的名称
+          mountPath: /logs/jumper-sms     # 需要挂载的容器内地址
+          subPath: ./logs     # 挂载的存储卷路径（必须是相对路径）           
+      volumes:
+      - name: jumper-sms-data
+        persistentVolumeClaim:
+          claimName: jumper-sms      
+---
+# 内部访问的Headless Service无头服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: jumper-sms-service
+  namespace: jumper  #命名空间  
+spec:
+  selector:
+    app: jumper-sms
+  ports:
+  - name: jumper-sms
+    port: 6002

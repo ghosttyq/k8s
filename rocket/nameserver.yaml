@@ -1,0 +1,100 @@
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: rocketmq
+  name: service-rocketmq-namesrv
+  labels:
+    app: service-rocketmq-namesrv
+spec:
+  ports:
+  - protocol: TCP
+    port: 9876
+    targetPort: 9876
+  selector:
+    app: pod-rocketmq-namesrv
+  type: ClusterIP
+  clusterIP: None
+  sessionAffinity: ClientIP
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: rocketmq
+  name: extenel-service-namesrv
+  labels:
+    app: extenel-service-namesrv
+spec:
+  ports:
+  - protocol: TCP
+    port: 9876
+    targetPort: 9876
+    nodePort: 30876
+  selector:
+    app: pod-rocketmq-namesrv
+  type: NodePort
+---
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  namespace: rocketmq
+  name: statefulset-rocketmq-namesrv
+  labels:
+    app: statefulset-rocketmq-namesrv
+spec:
+  replicas: 1
+  serviceName: service-rocketmq-namesrv
+  selector:
+    matchLabels:
+      app: pod-rocketmq-namesrv
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: pod-rocketmq-namesrv
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/rocketmq: "true"
+      hostNetwork: true
+      imagePullSecrets:
+      - name: hwhubsecret
+      containers:
+      - image: swr.cn-south-1.myhuaweicloud.com/ghosttyq/rocketmq-namesrv:4.9.2
+        securityContext:
+          privileged: true
+        imagePullPolicy: IfNotPresent
+        name: container-rocketmq-namesrv
+        ports:
+        - protocol: TCP
+          containerPort: 9876
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+        readinessProbe:
+          tcpSocket:
+            port: 9876
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 9876
+          initialDelaySeconds: 120
+          periodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - pod-rocketmq-namesrv
+              topologyKey: kubernetes.io/hostname
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always

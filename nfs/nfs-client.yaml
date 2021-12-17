@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+  namespace: nfs
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-client-provisioner-runner
+  namespace: nfs
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get","create","list", "watch","update"]
+  - apiGroups: ["extensions"]
+    resources: ["podsecuritypolicies"]
+    resourceNames: ["nfs-provisioner"]
+    verbs: ["use"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: run-nfs-client-provisioner
+  namespace: nfs
+subjects:
+  - kind: ServiceAccount
+    name: nfs-client-provisioner
+    namespace: nfs
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nfs-client-provisioner1
+  name: nfs-client-provisioner1
+  namespace: nfs
+spec:
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner1
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner1
+    spec:
+      containers:
+      - env:
+        - name: PROVISIONER_NAME
+          value: nfs-store1
+        - name: NFS_SERVER
+          value: 192.168.0.214
+        - name: NFS_PATH
+          value: /nfs/data
+        image: quay.io/external_storage/nfs-client-provisioner:latest
+        imagePullPolicy: IfNotPresent
+        name: nfs-client-db
+        volumeMounts:
+        - mountPath: /persistentvolumes
+          name: nfs-client-root
+      serviceAccountName: nfs-client-provisioner
+      nodeName: k8snode2
+      volumes:
+      - name: nfs-client-root
+        nfs:
+          path: /nfs/data
+          server: 192.168.0.214
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-nfs-storage1
+  namespace: nfs
+parameters:
+  archiveOnDelete: "false"
+provisioner: nfs-store1
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app: nfs-client-provisioner2
+  name: nfs-client-provisioner2
+  namespace: nfs
+spec:
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner2
+  template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner2
+    spec:
+      containers:
+      - env:
+        - name: PROVISIONER_NAME
+          value: nfs-store2
+        - name: NFS_SERVER
+          value: 192.168.0.250
+        - name: NFS_PATH
+          value: /nfs/data
+        image: quay.io/external_storage/nfs-client-provisioner:latest
+        imagePullPolicy: IfNotPresent
+        name: nfs-client-db
+        volumeMounts:
+        - mountPath: /persistentvolumes
+          name: nfs-client-root
+      serviceAccountName: nfs-client-provisioner
+      nodeName: k8snode3
+      volumes:
+      - name: nfs-client-root
+        nfs:
+          path: /nfs/data
+          server: 192.168.0.250
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-nfs-storage2
+  namespace: nfs
+parameters:
+  archiveOnDelete: "false"
+provisioner: nfs-store2

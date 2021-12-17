@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: mysql
+  labels:
+    app: mysql-master
+  annotations:
+    kubesphere.io/serviceType: statefulservice
+    kubesphere.io/alias-name: mysql-master
+  name: mysql-master
+spec:
+  sessionAffinity: ClientIP
+  selector:
+    app: mysql-master
+  ports:
+    - name: tcp-3306
+      protocol: TCP
+      port: 3306
+      targetPort: 3306
+    - name: tcp-33060
+      protocol: TCP
+      port: 33060
+      targetPort: 33060
+  clusterIP: None
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: mysql
+  labels:
+    app: mysql-slave
+  annotations:
+    kubesphere.io/serviceType: statefulservice
+    kubesphere.io/alias-name: mysq-slave
+  name: mysql-slave
+spec:
+  sessionAffinity: ClientIP
+  selector:
+    app: mysql-slave
+  ports:
+    - name: tcp-3306
+      protocol: TCP
+      port: 3306
+      targetPort: 3306
+    - name: tcp-33060
+      protocol: TCP
+      port: 33060
+      targetPort: 33060
+  clusterIP: None
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-master-front
+  labels:
+    app: mysql-master
+  namespace: mysql
+spec:
+  selector:
+    app: mysql-master
+  type: NodePort
+  ports:
+    - name: ''
+      port: 3306
+      protocol: TCP
+      targetPort: 3306
+      nodePort: 30001  #指定主机任意端口30000-32767
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-slave-front
+  labels:
+    app: mysql-slave
+  namespace: mysql
+spec:
+  selector:
+    app: mysql-slave
+  type: NodePort
+  ports:
+    - name: ''
+      port: 3306
+      protocol: TCP
+      targetPort: 3306
+      nodePort: 30002    #指定主机任意端口30000-32767
+  sessionAffinity: None

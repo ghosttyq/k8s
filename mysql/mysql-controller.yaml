@@ -1,0 +1,244 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: mysql
+  labels:
+    app: mysql-master
+  name: mysql-master
+  annotations:
+    kubesphere.io/alias-name: mysql-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-master
+  template:
+    metadata:
+      labels:
+        app: mysql-master
+      annotations:
+        kubesphere.io/containerSecrets: None
+        logging.kubesphere.io/logsidecar-config: '{}'
+    spec:
+      containers:
+        - name: master-container
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: '0.1'
+              memory: 128Mi
+            limits:
+              cpu: '0.98'
+              memory: 1700Mi
+          image: 'mysql:8.0.25'
+          ports:
+            - name: tcp-3306
+              protocol: TCP
+              containerPort: 3306
+            - name: tcp-33060
+              protocol: TCP
+              containerPort: 33060
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_ROOT_PASSWORD
+          volumeMounts:
+            - name: master-data-volume
+              readOnly: false
+              mountPath: /var/lib/mysql
+            - name: master-sqlfiles-volume
+              readOnly: false
+              mountPath: /var/lib/mysql-files
+            - name: mysql-conf
+              mountPath: /etc/mysql/conf.d/  # mysql启动配置文件
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d/  # master初始化sql语句
+      serviceAccount: default
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: mysql-master
+                topologyKey: kubernetes.io/hostname
+      initContainers: []
+      imagePullSecrets: null
+      volumes:
+        - name: mysql-conf #映射configmap信息
+          configMap:
+            name: mysql-conf
+            items:
+              - key: mysql-master.cnf
+                path: mysql-master.cnf
+        - name: mysql-init
+          configMap:
+            name: mysql-conf
+            items:
+              - key: init-master.sql
+                path: init.sql
+  volumeClaimTemplates:  # NFS提供持久化存储
+    - metadata:
+        name: master-data-volume
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 22Gi
+        storageClassName: nfs-mysql
+    - metadata:
+        name: master-sqlfiles-volume
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 3Gi
+        storageClassName: nfs-mysql
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  serviceName: mysql-master
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: mysql
+  labels:
+    app: mysql-slave
+  name: mysql-slave
+  annotations:
+    kubesphere.io/alias-name: mysql-slave
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-slave
+  template:
+    metadata:
+      labels:
+        app: mysql-slave
+      annotations:
+        kubesphere.io/containerSecrets: None
+        logging.kubesphere.io/logsidecar-config: '{}'
+    spec:
+      containers:
+        - name: slave-container
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: '0.1'
+              memory: 128Mi
+            limits:
+              cpu: '0.98'
+              memory: 1700Mi
+          image: 'mysql:8.0.25'
+          ports:
+            - name: tcp-3306
+              protocol: TCP
+              containerPort: 3306
+            - name: tcp-33060
+              protocol: TCP
+              containerPort: 33060
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_ROOT_PASSWORD
+          volumeMounts:
+            - name: slave-data-volume
+              readOnly: false
+              mountPath: /var/lib/mysql
+            - name: slave-sqlfiles-volume
+              readOnly: false
+              mountPath: /var/lib/mysql-files
+            - name: server-conf
+              mountPath: /etc/mysql/conf.d/
+            - name: mysql-slave-init
+              mountPath: /docker-entrypoint-initdb.d/
+            - name: mysql-slave-reset
+              mountPath: /reset-slave.sh
+              subPath: reset-slave.sh
+      serviceAccount: default
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: mysql-slave
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: init-mysql
+          image: mysql:8.0.25
+          imagePullPolicy: IfNotPresent
+          command:
+            - bash
+            - "-c"
+            - |
+              set -ex
+              # 从config-map中复制配置文件到emptyDir，因为config-map目录为只读
+              cp /etc/mysql-slave-conf/mysql-slave.cnf /etc/conf.d/mysql-slave.cnf
+              # 从Pod序号生成server-id, =~ 判断字符串包含关系，BASH_REMATCH变量存储匹配结果
+              [[ `hostname` =~ -([0-9]+)$ ]] || exit 1
+              pod_number=${BASH_REMATCH[1]}
+              echo -e "\nserver-id=$((100 + pod_number))" >> /etc/conf.d/mysql-slave.cnf
+          volumeMounts:
+            - name: server-conf
+              mountPath: /etc/conf.d/
+            - name: mysql-slave-conf
+              mountPath: /etc/mysql-slave-conf/
+      imagePullSecrets: null
+      volumes:
+        - name: server-conf
+          emptyDir: {}
+        - name: mysql-slave-conf
+          configMap:
+            name: mysql-conf
+            items:
+              - key: mysql-slave.cnf
+                path: mysql-slave.cnf
+        - name: mysql-slave-init
+          configMap:
+            name: mysql-conf
+            items:
+              - key: init-slave.sql
+                path: init-slave.sql
+        - name: mysql-slave-reset
+          configMap:
+            name: mysql-conf
+            defaultMode: 0777    # 默认权限为0644，需要增加执行权限
+            items:
+              - key: reset-slave.sh
+                path: reset-slave.sh
+  volumeClaimTemplates:  # NFS提供持久化存储
+    - metadata:
+        name: slave-data-volume
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 22Gi
+        storageClassName: nfs-mysql
+    - metadata:
+        name: slave-sqlfiles-volume
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 3Gi
+        storageClassName: nfs-mysql
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  serviceName: mysql-slave

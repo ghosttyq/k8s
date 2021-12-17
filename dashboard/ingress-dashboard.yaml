@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: k8s-dashboard
+  namespace: kubernetes-dashboard  #命名空间
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # 开启use-regex，启用path的正则匹配
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # 默认为 true，启用 TLS 时，http请求会 308 重定向到https
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 默认为 http，开启后端服务使用 proxy_pass https://协议
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  #ingressClassName: nginx
+  tls:
+  - secretName: mini-dashboard.ghosttyq.site
+    hosts:
+    - mini-dashboard.ghosttyq.site
+  rules:  # 用于定义当前Ingress资源的转发规则列表；由rules定义规则，或没有匹配到规则时，所有的流量会转发到由backend定义的默认后端
+  - host: mini-dashboard.ghosttyq.site
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:  #  默认的后端用于服务那些没有匹配到任何规则的请求；定义Ingress资源时，必须要定义backend或rules两者之一，该字段用于让负载均衡器指定一个全局默认的后端
+          service:
+            name: kubernetes-dashboard    # Service资源名称
+            port:
+              number: 443   #Service端口（可以取ports里面的name，也可以取数字端口）  

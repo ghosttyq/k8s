@@ -1,0 +1,53 @@
+---
+# MySQL Conf
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-conf
+  namespace: mysql
+data:
+  mysql-master.cnf: |
+    [mysqld]
+    log-bin=mysql-bin
+    server-id=1
+    gtid_mode=on
+    enforce_gtid_consistency=1
+    skip-host-cache
+    skip-name-resolve
+
+  mysql-slave.cnf: |
+    [mysqld]
+    log-bin=mysql-bin
+    # server-id=100 通过initContainer自动生成
+    gtid_mode=on
+    enforce_gtid_consistency=1
+    read_only=on
+    skip-host-cache
+    skip-name-resolve
+
+  init-master.sql: |
+    ALTER USER 'root'@'%' IDENTIFIED BY 'password' PASSWORD EXPIRE NEVER;
+    ALTER USER 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'tyq841217!@#'; 
+    CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'tyq841217!@#';
+    GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+    flush privileges;
+
+  init-slave.sql: |
+    ALTER USER 'root'@'%' IDENTIFIED BY 'password' PASSWORD EXPIRE NEVER;
+    ALTER USER 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'tyq841217!@#';
+    CHANGE MASTER TO MASTER_HOST='mysql-master.mysql.svc.cluster.local', MASTER_USER='repl', MASTER_PASSWORD='tyq841217!@#', master_auto_position=1;
+    start slave;
+
+  reset-slave.sh: |
+    #!/bin/sh
+
+    # wait mysqld startup
+    until mysql -uroot -p${MYSQL_ROOT_PASSWORD} -e "SELECT 1"; do sleep 1; done
+
+    # reset slave
+    mysql -uroot -p${MYSQL_ROOT_PASSWORD} <<EOF
+    stop slave;
+    reset slave;
+    CHANGE MASTER TO MASTER_HOST='mysql-master.mysql.svc.cluster.local', MASTER_USER='repl', MASTER_PASSWORD='tyq841217!@#', master_auto_position=1;
+    start slave;
+    EOF

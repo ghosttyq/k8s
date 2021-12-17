@@ -1,0 +1,113 @@
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: jumper-gateway
+  namespace: jumper  #命名空间
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "managed-nfs-storage1"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+# jumper-gateway 容器
+apiVersion: apps/v1  #版本号
+kind: Deployment   #创建的资源类型
+metadata:   #该资源的元数据，name必选项
+  name: jumper-gateway   #name描述
+  namespace: jumper  #命名空间
+spec:    #规格说明
+  replicas: 1    #副本数量
+  #serviceName: jumper-gateway-service    #声明它属于哪个Headless Service
+  selector:
+    matchLabels:
+      app: jumper-gateway
+  template:      #定义pod的模板，配置文件的重要部分
+    metadata:     #定义pod的元数据，至少定义一个label
+      labels:
+        app: jumper-gateway   #该pod拥有的标签，对应上面的spec.selector.matchLabels.app，否则匹配不上
+    spec:        #描述pod的规格，定义pod中每个容器的属性，name和image必须
+      imagePullSecrets:
+      - name: hwhubsecret
+      containers:    #容器描述
+      - name: jumper-gateway
+        image: swr.cn-south-1.myhuaweicloud.com/jumper/jumper-gateway-uat:latest        #镜像来源名字
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"           
+        imagePullPolicy: Always     #拉取策略
+        ports:   # 容器公开的端口列表。在这里公开端口可以为系统提供关于容器使用的网络连接的额外信息，但主要是提供描述信息
+        - name: jumper-gateway
+          containerPort: 6001
+        env:
+        - name: NACOS_ADDRESS  
+          value: "nacos-headless.jumper:8848"            
+        - name: SENTINEL_ADDRESS  
+          value: "sentinel-service.jumper:8858"           
+        - name: TZ  
+          value: "Asia/Shanghai"            
+        volumeMounts:
+        - name: jumper-gateway-data   # volumeClaimTemplates的名称
+          mountPath: /logs/jumper-gateway     # 需要挂载的容器内地址
+          subPath: ./logs     # 挂载的存储卷路径（必须是相对路径）           
+      volumes:
+      - name: jumper-gateway-data
+        persistentVolumeClaim:
+          claimName: jumper-gateway  
+---
+# 内部访问的Headless Service无头服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: jumper-gateway-service
+  namespace: jumper  #命名空间  
+spec:
+  selector:
+    app: jumper-gateway
+  ports:
+  - name: jumper-gateway
+    port: 6001  
+---
+# 外部访问的服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: jumper-gateway-external-service
+  namespace: jumper  #命名空间
+spec:
+  selector:
+    app: jumper-gateway
+  ports:
+  - name: jumper-gateway-port
+    protocol: TCP
+    port: 6001   # kubernetes中的服务之间访问的端口
+    targetPort: 6001  #  容器的端口（最根本的端口入口），与制作容器时暴露的端口一致（DockerFile中EXPOSE）
+    nodePort: 30601   #  外部机器可访问的端口
+  type: NodePort  
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jumper-gateway-ingress
+  namespace: jumper  #命名空间
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - mini-gateway.ghosttyq.site
+    secretName: mini-gateway.ghosttyq.site
+  rules:  # 用于定义当前Ingress资源的转发规则列表；由rules定义规则，或没有匹配到规则时，所有的流量会转发到由backend定义的默认后端
+  - host: mini-gateway.ghosttyq.site
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:  #  默认的后端用于服务那些没有匹配到任何规则的请求；定义Ingress资源时，必须要定义backend或rules两者之一，该字段用于让负载均衡器指定一个全局默认的后端
+          service:
+            name: jumper-gateway-service    # Service资源名称
+            port:
+              number: 6001   #Service端口（可以取ports里面的name，也可以取数字端口）           

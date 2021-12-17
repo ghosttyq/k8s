@@ -1,0 +1,131 @@
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  namespace: rocketmq
+  name: configmap-rocketmq-broker-master
+data:
+  NAMESRV_ADDR: "service-rocketmq-namesrv.rocketmq.svc.cluster.local:9876"
+  BROKER_ID: "0"
+  BROKER_ROLE: "ASYNC_MASTER"
+  STATEFULSET_NAME: "statefulset-rocketmq-broker-master"
+  SEND_MESSAGE_THREAD_POOL_NUMS: "128"
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: rocketmq
+  name: service-rocketmq-broker-master
+  labels:
+    app: service-rocketmq-broker-master
+spec:
+  ports:
+  - name: rocketmq-port-10909
+    protocol: TCP
+    port: 10909
+    targetPort: 10909
+  - name: rocketmq-port-10911
+    protocol: TCP
+    port: 10911
+    targetPort: 10911
+  selector:
+    app: pod-rocketmq-broker-master
+  type: ClusterIP
+  clusterIP: None
+  sessionAffinity: ClientIP
+---
+kind: StatefulSet
+apiVersion: apps/v1
+metadata:
+  namespace: rocketmq
+  name: statefulset-rocketmq-broker-master
+  labels:
+    app: statefulset-rocketmq-broker-master
+spec:
+  replicas: 1
+  serviceName: service-rocketmq-broker-master
+  selector:
+    matchLabels:
+      app: pod-rocketmq-broker-master
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: pod-rocketmq-broker-master
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/rocketmq: "true"
+      imagePullSecrets:
+      - name: hwhubsecret
+      containers:
+      - image: swr.cn-south-1.myhuaweicloud.com/ghosttyq/rocketmq-broker:4.9.2
+        securityContext:
+          privileged: true
+        imagePullPolicy: IfNotPresent
+        name: container-rocketmq-broker-master
+        ports:
+        - protocol: TCP
+          containerPort: 10909
+        - protocol: TCP
+          containerPort: 10911
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        envFrom:
+        - configMapRef:
+            name: configmap-rocketmq-broker-master
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: BROKER_IP1
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+
+        volumeMounts:
+        - name: host-volume-rocketmq-broker-master
+          mountPath: /opt/rocketmq/store
+
+        readinessProbe:
+          tcpSocket:
+            port: 10909
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+        livenessProbe:
+          tcpSocket:
+            port: 10909
+          initialDelaySeconds: 120
+          periodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - pod-rocketmq-broker-master
+              topologyKey: kubernetes.io/hostname
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+  volumeClaimTemplates:  # NFS提供持久化存储
+    - metadata:
+        name: host-volume-rocketmq-broker-master
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+        storageClassName: managed-nfs-storage2
+

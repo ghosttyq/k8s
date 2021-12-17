@@ -1,0 +1,104 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: jumper-job
+  namespace: jumper  #命名空间
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "managed-nfs-storage1"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1  #版本号
+kind: Deployment   #创建的资源类型
+metadata:   #该资源的元数据，name必选项
+  name: jumper-job   #name描述
+  namespace: jumper  #命名空间
+spec:    #规格说明
+  replicas: 1    #副本数量
+  selector:
+    matchLabels:
+      app: jumper-job
+  template:      #定义pod的模板，配置文件的重要部分
+    metadata:     #定义pod的元数据，至少定义一个label
+      labels:
+        app: jumper-job   #该pod拥有的标签，对应上面的spec.selector.matchLabels.app，否则匹配不上
+    spec:        #描述pod的规格，定义pod中每个容器的属性，name和image必须
+      imagePullSecrets:
+      - name: hwhubsecret
+      containers:    #容器描述
+      - name: job-admin
+        image: swr.cn-south-1.myhuaweicloud.com/jumper/saas-job-admin-uat:latest     #镜像来源名字
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"          
+        imagePullPolicy: Always     #拉取策略
+        ports:   # 容器公开的端口列表。在这里公开端口可以为系统提供关于容器使用的网络连接的额外信息，但主要是提供描述信息
+        - name: job-admin
+          containerPort: 8071
+        env:
+        - name: NACOS_ADDRESS  
+          value: "nacos-headless.jumper:8848"            
+        - name: SENTINEL_ADDRESS  
+          value: "sentinel-service.jumper:8858"           
+        - name: TZ  
+          value: "Asia/Shanghai"            
+        volumeMounts:
+        - name: jumper-job-data   # volumeClaimTemplates的名称
+          mountPath: /logs    # 需要挂载的容器内地址
+          subPath: ./logs     # 挂载的存储卷路径（必须是相对路径）
+        - name: jumper-job-data
+          mountPath: /opt
+          subPath: ./opt
+
+      - name: job-executor
+        image: swr.cn-south-1.myhuaweicloud.com/jumper/saas-job-executor-uat:latest       #镜像来源名字
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "256m"      
+        imagePullPolicy: Always     #拉取策略
+        ports:   # 容器公开的端口列表。在这里公开端口可以为系统提供关于容器使用的网络连接的额外信息，但主要是提供描述信息
+        - name: job-executor
+          containerPort: 8072
+        env:
+        - name: JOB_ADMIN_HOST  
+          value: "jumper-job-service.jumper"            
+        - name: JOB_ADMIN_PORT  
+          value: "8071" 
+        - name: JOB_EXECUTOR_HOST  
+          value: "jumper-job-service.jumper"          
+        - name: TZ  
+          value: "Asia/Shanghai"            
+        volumeMounts:
+        - name: jumper-job-data   # volumeClaimTemplates的名称
+          mountPath: /logs     # 需要挂载的容器内地址
+          subPath: ./logs     # 挂载的存储卷路径（必须是相对路径）
+        - name: jumper-job-data
+          mountPath: /opt
+          subPath: ./opt
+      volumes:
+      - name: jumper-job-data
+        persistentVolumeClaim:
+          claimName: jumper-job
+---
+# 内部访问的Headless Service无头服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: jumper-job-service
+  namespace: jumper  #命名空间  
+spec:
+  selector:
+    app: jumper-job
+  ports:
+  - name: job-admin
+    port: 8071
+  - name: job-executor1
+    port: 8072    
+  - name: job-executor2
+    port: 8888
